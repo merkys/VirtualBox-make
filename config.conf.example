@@ -1,0 +1,7 @@
+# Default port to forward SSH connections to guests:
+SSH_GUEST_PORT=3022
+# User for SSH connections:
+REMOTE_USER=tester
+# SSH key for connections to guests (leave empty for passwordless
+# connections):
+SSH_KEY=

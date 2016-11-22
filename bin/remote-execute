@@ -1,0 +1,78 @@
+#!/bin/bash
+
+if [ -e config.conf ]
+then
+    source config.conf
+else
+    echo "$0: configuration file config.conf is not found, exitting" >&2
+    exit 255
+fi
+
+SSH_IDENTITY=
+
+if [ -n "${SSH_KEY}" ]
+then
+    SSH_IDENTITY="-i ${SSH_KEY}"
+fi
+
+VM_NAME=$1
+shift
+SCRIPT=$1
+shift
+
+SNAPSHOT_NAME=snapshot-$$
+SSH_PORT=$(VBoxManage showvminfo ${VM_NAME} \
+            | grep Rule \
+            | grep ssh \
+            | perl -ne 'print $1 if /host port = (\d+)/')
+SSH_PORT_ADDED=0
+
+# Save the current state of the VM
+
+VBoxManage snapshot ${VM_NAME} take ${SNAPSHOT_NAME}
+
+if [ -z "${SSH_PORT}" ]
+then
+    SSH_PORT=${SSH_GUEST_PORT}
+    SSH_PORT_ADDED=1
+    VBoxManage modifyvm ${VM_NAME} --natpf1 "ssh,tcp,,${SSH_PORT},,22"
+fi
+
+# Start the VM
+
+VBoxManage startvm ${VM_NAME} --type headless
+
+ssh -o BatchMode=yes \
+    -o UserKnownHostsFile=/dev/null \
+    -o StrictHostKeyChecking=no \
+    -p ${SSH_PORT} ${SSH_IDENTITY} ${REMOTE_USER}@127.0.0.1  \
+    /bin/bash -s < ${SCRIPT}
+
+# Shutdown the VM
+
+VBoxManage controlvm ${VM_NAME} poweroff
+
+# Wait for the shutdown to finish
+
+STATE=$(VBoxManage showvminfo ${VM_NAME} \
+        | grep ^State: \
+        | awk '{print $2}')
+while [ "${STATE}" == "running" ]
+do
+    sleep 3
+    STATE=$(VBoxManage showvminfo ${VM_NAME} \
+            | grep ^State: \
+            | awk '{print $2}')
+done
+
+# Remove port forwarding (if set up)
+
+if [ "${SSH_PORT_ADDED}" -eq "1" ]
+then
+    VBoxManage modifyvm ${VM_NAME} --natpf1 delete ssh
+fi
+
+# Restore the previous state of VM and cleanup
+
+VBoxManage snapshot ${VM_NAME} restore ${SNAPSHOT_NAME}
+VBoxManage snapshot ${VM_NAME} delete ${SNAPSHOT_NAME}
